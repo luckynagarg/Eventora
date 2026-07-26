@@ -2,8 +2,17 @@ import axios from 'axios';
 
 const isDev = import.meta.env.DEV === true;
 
-// Use VITE_API_URL in production (Vercel), fallback to proxy in dev (Vite proxy)
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+// ─── API Base URL ────────────────────────────────────────────────────────
+// Production (Vercel): Uses VITE_API_URL env var. If unset, defaults to Render backend.
+// Development (Vite): Uses Vite proxy (/api → localhost:5000) when VITE_API_URL is unset.
+//
+// The production fallback ensures that even if VITE_API_URL is accidentally
+// omitted from Vercel environment variables, API calls still go to Render
+// instead of being rewritten to index.html by vercel.json.
+const PRODUCTION_API_URL = 'https://eventora-backend-lyfi.onrender.com';
+const DEV_API_URL = '/api';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || (isDev ? DEV_API_URL : PRODUCTION_API_URL);
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
