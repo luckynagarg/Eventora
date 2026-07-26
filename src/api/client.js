@@ -9,7 +9,7 @@ const isDev = import.meta.env.DEV === true;
 // The production fallback ensures that even if VITE_API_URL is accidentally
 // omitted from Vercel environment variables, API calls still go to Render
 // instead of being rewritten to index.html by vercel.json.
-const PRODUCTION_API_URL = 'https://eventora-backend-lyfi.onrender.com';
+const PRODUCTION_API_URL = 'https://eventora-backend-lyfi.onrender.com/api';
 const DEV_API_URL = '/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || (isDev ? DEV_API_URL : PRODUCTION_API_URL);
