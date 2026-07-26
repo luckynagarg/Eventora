@@ -22,19 +22,59 @@ export const api = axios.create({
 // ─── Public Routes (never trigger 401 logout) ────────────────────────────
 // These endpoints don't require authentication. 401 responses from these
 // are NOT auth failures — they should be ignored.
-const PUBLIC_ROUTES = [
-  '/auth/login',
-  '/auth/register',
-  '/auth/google',
-  '/events/featured',
-  '/events/trending',
-  '/events/upcoming',
-  '/categories',
-  '/health',
-];
+// Uses pathname-based matching with method awareness.
+const PUBLIC_ROUTES = {
+  // Always public regardless of HTTP method
+  anyMethod: new Set([
+    '/auth/login',
+    '/auth/register',
+    '/auth/google',
+    '/health',
+    '/categories',
+    '/search',
+  ]),
+  // Only GET requests to these are public
+  getOnly: new Set([
+    '/events',
+  ]),
+  prefix: [
+    '/events/featured',
+    '/events/trending',
+    '/events/upcoming',
+    '/reviews/event/',
+  ],
+};
 
-const isPublicRoute = (url) =>
-  PUBLIC_ROUTES.some((route) => url?.includes(route));
+const isPublicRoute = (url, method = 'GET') => {
+  if (!url) return false;
+  try {
+    const pathname = new URL(url, window.location.origin).pathname;
+    
+    // Routes that are public regardless of method
+    for (const route of PUBLIC_ROUTES.anyMethod) {
+      if (pathname.startsWith(route)) return true;
+    }
+    
+    // Routes that are public only for GET requests
+    if (method === 'GET') {
+      for (const route of PUBLIC_ROUTES.getOnly) {
+        if (pathname === route || pathname.startsWith(route + '/')) {
+          // Exclude protected subpaths like /events/my, /events/create
+          if (pathname === '/events/my' || pathname.startsWith('/events/my/')) return false;
+          if (pathname === '/events/create') return false;
+          return true;
+        }
+      }
+      for (const prefix of PUBLIC_ROUTES.prefix) {
+        if (pathname.startsWith(prefix)) return true;
+      }
+    }
+    
+    return false;
+  } catch {
+    return false;
+  }
+};
 
 // ─── Track 401 redirect state to avoid infinite loops ────────────────────
 let isRedirectingToLogin = false;
@@ -84,7 +124,8 @@ api.interceptors.response.use(
 
     // ── PUBLIC ROUTES: Never log out on 401 ──────────────────────────
     const url = originalRequest?.url || '';
-    if (isPublicRoute(url)) {
+    const method = originalRequest?.method?.toUpperCase() || 'GET';
+    if (isPublicRoute(url, method)) {
       if (isDev) {
         console.warn(
           `[API] 401 on public route ${url} – ignoring (no logout). ` +

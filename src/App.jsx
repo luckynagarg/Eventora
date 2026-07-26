@@ -7,6 +7,8 @@ const LandingPage = lazy(() => import('./pages/LandingPage.jsx'));
 const LoginPage = lazy(() => import('./pages/LoginPage.jsx'));
 const SignupPage = lazy(() => import('./pages/SignupPage.jsx'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage.jsx'));
+const ExplorePage = lazy(() => import('./pages/ExplorePage.jsx'));
+const EventDetailPage = lazy(() => import('./pages/EventDetailPage.jsx'));
 
 // Loading fallback component
 const PageLoader = () => (
@@ -35,6 +37,22 @@ function App() {
               </RequireAuth>
             }
           />
+
+          <Route
+            path="/explore"
+            element={
+              <RequireAuth>
+                <ExplorePage />
+              </RequireAuth>
+            }
+          />
+
+          {/* specific path before parameterized */}
+          <Route path="/events/create" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/events/:id" element={<EventDetailPage />} />
+
+          <Route path="/my-events" element={<Navigate to="/dashboard" replace />} />
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
