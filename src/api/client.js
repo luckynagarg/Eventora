@@ -14,6 +14,11 @@ const DEV_API_URL = '/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || (isDev ? DEV_API_URL : PRODUCTION_API_URL);
 
+// Log the resolved API URL in non-production for debugging
+if (isDev) {
+  console.log(`[API Client] Resolved BASE_URL: ${API_BASE_URL}`);
+}
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
 });
