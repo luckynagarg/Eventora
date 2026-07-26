@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { auth } from '../../config/firebase.js';
+import { signOut } from 'firebase/auth';
 
 const NAV_LINKS = [
   { path: '/', label: 'Home' },
@@ -11,10 +13,26 @@ const NAV_LINKS = [
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const menuRef = useRef(null);
   const buttonRef = useRef(null);
   const location = useLocation();
-  const token = localStorage.getItem('token');
+
+  // Reactive auth state – listens for changes via storage events
+  // so that login/logout reactively hides/shows nav items
+  useEffect(() => {
+    const checkAuth = () => {
+      const token = localStorage.getItem('token');
+      const firebaseToken = localStorage.getItem('firebase_id_token');
+      setIsAuthenticated(Boolean(token || firebaseToken));
+    };
+
+    checkAuth();
+
+    // Listen for storage changes (login/logout in other tabs)
+    window.addEventListener('storage', checkAuth);
+    return () => window.removeEventListener('storage', checkAuth);
+  }, []);
 
   const toggleMenu = useCallback(() => {
     setIsOpen((prev) => !prev);
@@ -75,8 +93,28 @@ export default function Navbar() {
     };
   }, [isOpen]);
 
+  const handleLogout = async () => {
+    try {
+      // Sign out from Firebase (handles Google Sign-In session)
+      await signOut(auth);
+    } catch (err) {
+      console.error('[Navbar] Firebase sign-out error:', err);
+    }
+
+    // Clear all local auth data
+    localStorage.removeItem('token');
+    localStorage.removeItem('firebase_id_token');
+    localStorage.removeItem('user');
+
+    // Update reactive state
+    setIsAuthenticated(false);
+
+    // Redirect to home
+    window.location.href = '/';
+  };
+
   const filteredLinks = NAV_LINKS.filter((link) => {
-    if (link.authRequired && !token) return false;
+    if (link.authRequired && !isAuthenticated) return false;
     return true;
   });
 
@@ -122,13 +160,9 @@ export default function Navbar() {
                 </Link>
               );
             })}
-            {token && (
+            {isAuthenticated && (
               <button
-                onClick={() => {
-                  localStorage.removeItem('token');
-                  localStorage.removeItem('user');
-                  window.location.href = '/';
-                }}
+                onClick={handleLogout}
                 className="ml-2 px-4 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-all duration-200"
                 aria-label="Logout"
               >
@@ -221,12 +255,11 @@ export default function Navbar() {
               );
             })}
 
-            {token && (
+            {isAuthenticated && (
               <button
                 onClick={() => {
-                  localStorage.removeItem('token');
-                  localStorage.removeItem('user');
-                  window.location.href = '/';
+                  closeMenu();
+                  handleLogout();
                 }}
                 className="w-full text-left px-4 py-3 rounded-xl text-base font-medium text-red-600 hover:bg-red-50 transition-all duration-200"
               >

@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAnalytics, isSupported } from 'firebase/analytics';
-import { getAuth, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyDTOE4LH5lgMn4V1HHHjlEp8kylaw9bdxg',
@@ -19,10 +19,6 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 // ─── Services ─────────────────────────────────────────────────────────────
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
-
-// Optional: request additional scopes if needed
-// googleProvider.addScope('profile');
-// googleProvider.addScope('email');
 
 // Set custom OAuth parameters
 googleProvider.setCustomParameters({
@@ -75,69 +71,9 @@ if (isDev) {
   }
 }
 
-// ─── Auth State Listener (singleton, registered once) ─────────────────────
-// This is a singleton that components can subscribe to.
-// It handles token refresh and auth state persistence.
-let onAuthStateChangedInitialized = false;
-
 /**
- * Initializes the Firebase auth state listener.
- * Must be called once from the app entry point (main.jsx or App.jsx).
- * Returns an unsubscribe function.
- */
-export function initAuthListener(onUserChanged) {
-  if (onAuthStateChangedInitialized) {
-    if (isDev) {
-      console.warn('[Firebase] Auth listener already initialized – skipping duplicate registration.');
-    }
-    return () => {};
-  }
-
-  onAuthStateChangedInitialized = true;
-
-  if (isDev) {
-    console.log('%c[Firebase] Registering onAuthStateChanged listener', 'color: #4CAF50; font-weight: bold;');
-  }
-
-  const unsubscribe = onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      // User is signed in – get the ID token for API requests
-      try {
-        const idToken = await user.getIdToken(true); // force refresh
-        if (isDev) {
-          console.log('%c[Firebase] Auth state: signed in', 'color: #4CAF50; font-weight: bold;');
-          console.log(`  User: ${user.email}`);
-          console.log(`  ID Token: ${idToken.substring(0, 20)}... (truncated)`);
-        }
-        // Store the token for API interceptor usage
-        localStorage.setItem('firebase_id_token', idToken);
-        localStorage.setItem('user', JSON.stringify({
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          photoURL: user.photoURL,
-        }));
-        onUserChanged?.(user, idToken);
-      } catch (error) {
-        console.error('[Firebase] Failed to refresh ID token:', error);
-        onUserChanged?.(null, null);
-      }
-    } else {
-      // User is signed out
-      if (isDev) {
-        console.log('%c[Firebase] Auth state: signed out', 'color: #F44336; font-weight: bold;');
-      }
-      localStorage.removeItem('firebase_id_token');
-      // Don't remove the JWT token here – it may be from email/password login
-      onUserChanged?.(null, null);
-    }
-  });
-
-  return unsubscribe;
-}
-
-/**
- * Returns the current Firebase ID token, refreshing if necessary.
+ * Returns the current Firebase ID token without forcing refresh.
+ * Used by the API interceptor to attach Firebase token as fallback auth.
  */
 export async function getFirebaseIdToken() {
   const user = auth.currentUser;

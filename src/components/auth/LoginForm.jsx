@@ -20,10 +20,23 @@ export default function LoginForm() {
 
     try {
       const response = await api.post('/auth/login', { email, password });
+
+      // Store JWT token from backend
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
+
+      // Also store in firebase_id_token for compatibility with RequireAuth
+      // (this ensures RequireAuth sees the user as authenticated even without Firebase)
+      // Note: This is a JWT, not a Firebase ID token, but it serves the same purpose
+      // for the auth guard check.
+
       setMessage('Login successful! Redirecting...');
-      setTimeout(() => navigate('/dashboard'), 1000);
+
+      // Check if there's a redirect parameter in the URL
+      const params = new URLSearchParams(window.location.search);
+      const redirectTo = params.get('redirect') || '/dashboard';
+
+      setTimeout(() => navigate(redirectTo), 1000);
     } catch (error) {
       setMessage(error.response?.data?.error || 'Login failed');
     } finally {

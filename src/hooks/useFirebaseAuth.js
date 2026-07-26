@@ -8,14 +8,22 @@ const isDev = import.meta.env.DEV === true;
  * useFirebaseAuth Hook
  *
  * Provides reactive Firebase auth state to any component.
- * The underlying onAuthStateChanged listener is initialized only once
- * via initAuthListener() called from App.jsx.
+ * The global onAuthStateChanged listener is registered once in main.jsx,
+ * but this hook also subscribes individually (Firebase supports multiple
+ * subscribers without duplication).
+ *
+ * IMPORTANT: This hook uses getIdToken(false) instead of getIdToken(true)
+ * to avoid unnecessary forced token refreshes on every auth state change.
+ * Force refresh (true) should only be used when explicitly needed (e.g.,
+ * after 401 retry).
  *
  * Returns:
  *   - user: Firebase User | null
  *   - idToken: string | null (Firebase ID token for API calls)
  *   - loading: boolean (true while initial auth state is resolving)
  *   - error: Error | null
+ *   - isAuthenticated: boolean
+ *   - refreshToken: () => Promise<string|null>
  */
 export function useFirebaseAuth() {
   const [state, setState] = useState({
@@ -26,16 +34,14 @@ export function useFirebaseAuth() {
   });
 
   useEffect(() => {
-    // The singleton listener was registered in App.jsx via initAuthListener().
-    // Here we subscribe to onAuthStateChanged to get reactive updates.
-    // This is safe to use in multiple components because onAuthStateChanged
-    // supports multiple subscribers without duplication.
     const unsubscribe = onAuthStateChanged(
       auth,
       async (user) => {
         if (user) {
           try {
-            const token = await user.getIdToken(true);
+            // Use getIdToken(false) to avoid forced refresh on every auth change.
+            // The token is refreshed automatically by Firebase when close to expiry.
+            const token = await user.getIdToken(false);
             if (isDev) {
               console.log(
                 `%c[useFirebaseAuth] User: ${user.email}`,
@@ -44,7 +50,7 @@ export function useFirebaseAuth() {
             }
             setState({ user, idToken: token, loading: false, error: null });
           } catch (err) {
-            console.error('[useFirebaseAuth] Token refresh error:', err);
+            console.error('[useFirebaseAuth] Token retrieval error:', err);
             setState({ user: null, idToken: null, loading: false, error: err });
           }
         } else {
@@ -66,9 +72,15 @@ export function useFirebaseAuth() {
     return () => unsubscribe();
   }, []);
 
+  /**
+   * Explicitly force-refresh the Firebase ID token.
+   * Use this after a 401 retry attempt to get a fresh token.
+   */
   const refreshToken = useCallback(async () => {
     if (state.user) {
       try {
+        // Force refresh here because the user explicitly requested it
+        // (typically after a 401 response)
         const token = await state.user.getIdToken(true);
         setState((prev) => ({ ...prev, idToken: token }));
         return token;

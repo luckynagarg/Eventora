@@ -77,21 +77,17 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
 
   // ─── Error message resolver ───────────────────────────────────────────
   const getErrorMessage = (error) => {
-    // Firebase auth errors have a `code` property like 'auth/unauthorized-domain'
     if (error.code && FIREBASE_ERROR_MESSAGES[error.code]) {
       return FIREBASE_ERROR_MESSAGES[error.code];
     }
-    // Backend API errors
     if (error.response?.data?.error) {
       return error.response.data.error;
     }
-    // Fallback
     return error.message || 'Google sign-in failed. Please try again.';
   };
 
   // ─── Main handler ─────────────────────────────────────────────────────
   const handleGoogleSignIn = async () => {
-    // Prevent multiple simultaneous popup attempts
     if (popupInProgress.current) {
       log('Blocked duplicate popup attempt');
       return;
@@ -109,7 +105,6 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
       const result = await signInWithPopup(auth, googleProvider);
       log('Popup success', { user: result.user.email });
 
-      // Reset retry counter on success
       retryCount.current = 0;
 
       // ── Step 2: Extract the Google ID token ────────────────────────
@@ -126,8 +121,17 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
       log('Backend verification successful', { userId: response.data.user?.id });
 
       // ── Step 4: Store auth data ────────────────────────────────────
+      // Store both the backend JWT (for API calls) and Firebase ID token
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
+
+      // Also ensure firebase_id_token is set for RequireAuth compatibility
+      try {
+        const firebaseToken = await result.user.getIdToken(false);
+        localStorage.setItem('firebase_id_token', firebaseToken);
+      } catch (e) {
+        // Non-critical – RequireAuth checks both tokens
+      }
 
       // ── Step 5: Notify user and redirect ───────────────────────────
       setMessageType('success');
@@ -142,34 +146,28 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
       logError('Popup failure', error);
 
       // ── Step 6: Handle specific Firebase errors ────────────────────
-
-      // Popup closed by user – benign, just inform
       if (error.code === 'auth/popup-closed-by-user') {
         setMessageType('info');
         setMessage(FIREBASE_ERROR_MESSAGES['auth/popup-closed-by-user']);
         return;
       }
 
-      // Cancelled popup request (another popup already open) – silent
       if (error.code === 'auth/cancelled-popup-request') {
         return;
       }
 
-      // Unauthorized domain – critical, direct user to Firebase Console
       if (error.code === 'auth/unauthorized-domain') {
         setMessageType('error');
         setMessage(FIREBASE_ERROR_MESSAGES['auth/unauthorized-domain']);
         return;
       }
 
-      // Popup blocked – browser setting issue
       if (error.code === 'auth/popup-blocked') {
         setMessageType('error');
         setMessage(FIREBASE_ERROR_MESSAGES['auth/popup-blocked']);
         return;
       }
 
-      // Network error – could be transient, attempt retry
       if (error.code === 'auth/network-request-failed' && retryCount.current < MAX_RETRIES) {
         retryCount.current += 1;
         log(`Retry attempt ${retryCount.current}/${MAX_RETRIES}`);
@@ -177,28 +175,24 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
         setMessageType('info');
         setMessage(`Network error. Retrying (${retryCount.current}/${MAX_RETRIES})...`);
 
-        // Small delay before retry
         await new Promise((resolve) => setTimeout(resolve, 1000));
         popupInProgress.current = false;
         setLoading(false);
         return handleGoogleSignIn();
       }
 
-      // Too many requests – throttle
       if (error.code === 'auth/too-many-requests') {
         setMessageType('error');
         setMessage(FIREBASE_ERROR_MESSAGES['auth/too-many-requests']);
         return;
       }
 
-      // Generic firebase error
       if (error.code && FIREBASE_ERROR_MESSAGES[error.code]) {
         setMessageType('error');
         setMessage(FIREBASE_ERROR_MESSAGES[error.code]);
         return;
       }
 
-      // Backend/network error
       setMessageType('error');
       setMessage(getErrorMessage(error));
     } finally {
@@ -264,4 +258,3 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
     </>
   );
 }
-
