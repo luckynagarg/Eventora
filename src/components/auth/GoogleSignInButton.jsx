@@ -1,5 +1,10 @@
-import { useState, useRef } from 'react';
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { useState, useRef, useEffect } from 'react';
+import {
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+} from 'firebase/auth';
 import { auth, googleProvider } from '../../config/firebase.js';
 import { api } from '../../api/client.js';
 import { useNavigate } from 'react-router-dom';
@@ -8,13 +13,56 @@ import Toast from '../ui/Toast.jsx';
 const isDev = import.meta.env.DEV === true;
 
 /**
+ * Detailed runtime environment logging – aids debugging Google Sign-In issues.
+ * Logged once when the module loads.
+ */
+if (isDev) {
+  const currentOrigin = window.location.origin;
+  const currentHost = window.location.host;
+
+  console.groupCollapsed(
+    '%c[GoogleSignIn] Runtime Environment',
+    'color: #4285F4; font-weight: bold;'
+  );
+  console.log('Current origin:', currentOrigin);
+  console.log('Current host:', currentHost);
+  console.log('Firebase Project ID: eventora-ec1b6');
+  console.log('Firebase Auth Domain: eventora-ec1b6.firebaseapp.com');
+  console.log('Expected Authorized Domain:', currentHost);
+  console.log(
+    'Firebase Console (Authorized Domains):',
+    'https://console.firebase.google.com/project/eventora-ec1b6/authentication/settings'
+  );
+  console.log(
+    'Google Cloud Console (OAuth JS Origins):',
+    'https://console.cloud.google.com/apis/credentials'
+  );
+  console.groupEnd();
+}
+
+/**
  * Maps Firebase auth error codes to user-friendly messages.
+ *
+ * NOTE: The 'auth/unauthorized-domain' message uses HTML for rich formatting
+ * (clickable link, code block). It is rendered via dangerouslySetInnerHTML
+ * in the Toast component.
  */
 const FIREBASE_ERROR_MESSAGES = {
-  'auth/unauthorized-domain':
-    'This domain is not authorized for Google Sign-In. Please contact the site administrator and reference: "Add this domain to Firebase Console → Authentication → Settings → Authorized domains."',
+  'auth/unauthorized-domain': [
+    '<strong>This domain is not authorized for Google Sign-In.</strong><br><br>',
+    'Current origin: <code>' + window.location.origin + '</code><br><br>',
+    '<strong>To fix this:</strong><br>',
+    '1. Open the Firebase Console:<br>',
+    '&nbsp;&nbsp;<a href="https://console.firebase.google.com/project/eventora-ec1b6/authentication/settings" target="_blank" rel="noopener" class="underline text-blue-600">Firebase Console → Authentication → Settings</a><br>',
+    '2. Under <strong>"Authorized domains"</strong>, click <strong>"Add domain"</strong><br>',
+    '3. Add: <code>' + window.location.host + '</code><br>',
+    '4. Also ensure <strong>Google Sign-In</strong> is <strong>ENABLED</strong><br>',
+    '&nbsp;&nbsp;under <a href="https://console.firebase.google.com/project/eventora-ec1b6/authentication/providers" target="_blank" rel="noopener" class="underline text-blue-600">Authentication → Sign-in method</a><br>',
+    '5. Click <strong>"Save"</strong><br><br>',
+    'After saving, reload this page and try again.',
+  ].join(''),
   'auth/popup-blocked':
-    'Popup was blocked by your browser. Please allow popups for this site and try again, or use a different sign-in method.',
+    'Popup was blocked by your browser. Please allow popups for this site and try again, or use email/password login instead.',
   'auth/popup-closed-by-user':
     'Sign-in popup was closed before completing the login. Please try again.',
   'auth/cancelled-popup-request':
@@ -23,21 +71,20 @@ const FIREBASE_ERROR_MESSAGES = {
     'Network error. Please check your internet connection and try again.',
   'auth/too-many-requests':
     'Too many sign-in attempts. Please wait a few minutes before trying again.',
-  'auth/user-disabled':
-    'This account has been disabled. Please contact support.',
+  'auth/user-disabled': 'This account has been disabled. Please contact support.',
   'auth/account-exists-with-different-credential':
-    'An account already exists with the same email address but different sign-in method. Try signing in with email/password.',
+    'An account already exists with the same email address but a different sign-in method. Try signing in with email/password instead.',
 };
+
+const UNKNOWN_ERROR =
+  'Google sign-in failed. Please try again or use email/password login.';
 
 /**
  * GoogleSignInButton Component
  *
- * Handles Google OAuth sign-in/sign-up with:
- *  - Popup-based authentication via Firebase
- *  - Backend token verification and user creation
- *  - Graceful error handling for all Firebase auth error codes
- *  - Retry logic (1 retry on failure)
- *  - Race condition prevention (lock on popup)
+ * Attempts popup-based Google sign-in first. If the domain is not authorized
+ * for popups, it falls back to a redirect-based flow, which works even
+ * without the domain being explicitly in Firebase's authorized list.
  */
 export default function GoogleSignInButton({ mode = 'signup' }) {
   const [loading, setLoading] = useState(false);
@@ -45,37 +92,11 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
   const [messageType, setMessageType] = useState('info');
   const navigate = useNavigate();
 
-  // Ref to track popup state and prevent concurrent popups
   const popupInProgress = useRef(false);
-  const retryCount = useRef(0);
-  const MAX_RETRIES = 1;
 
-  // ─── Debug logging ────────────────────────────────────────────────────
-  const log = (event, data = {}) => {
-    if (isDev) {
-      console.log(
-        `%c[GoogleSignIn] ${event}`,
-        'color: #4285F4; font-weight: bold;',
-        data
-      );
-    }
-  };
-
-  const logError = (event, error) => {
-    if (isDev) {
-      console.error(
-        `%c[GoogleSignIn] ${event}`,
-        'color: #DB4437; font-weight: bold;',
-        {
-          code: error.code,
-          message: error.message,
-          ...error,
-        }
-      );
-    }
-  };
-
-  // ─── Error message resolver ───────────────────────────────────────────
+  /* ───────────────────────────────────────────────
+   * Resolve Firebase error code → user-facing string
+   * ─────────────────────────────────────────────── */
   const getErrorMessage = (error) => {
     if (error.code && FIREBASE_ERROR_MESSAGES[error.code]) {
       return FIREBASE_ERROR_MESSAGES[error.code];
@@ -83,118 +104,170 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
     if (error.response?.data?.error) {
       return error.response.data.error;
     }
-    return error.message || 'Google sign-in failed. Please try again.';
+    return error.message || UNKNOWN_ERROR;
   };
 
-  // ─── Main handler ─────────────────────────────────────────────────────
-  const handleGoogleSignIn = async () => {
-    if (popupInProgress.current) {
-      log('Blocked duplicate popup attempt');
-      return;
-    }
+  /* ───────────────────────────────────────────────
+   * Store auth data in localStorage & redirect
+   * ─────────────────────────────────────────────── */
+  const finaliseAuth = (token, userPayload) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(userPayload));
 
+    setMessageType('success');
+    setMessage(
+      mode === 'login'
+        ? 'Logged in successfully! Redirecting…'
+        : 'Account created successfully! Redirecting…',
+    );
+
+    const params = new URLSearchParams(window.location.search);
+    const redirectTo = params.get('redirect') || '/dashboard';
+    setTimeout(() => navigate(redirectTo), 1_200);
+  };
+
+  /* ───────────────────────────────────────────────
+   * Share the ID token from Firebase with our backend
+   * ─────────────────────────────────────────────── */
+  const exchangeTokenWithBackend = async (idToken) => {
+    const response = await api.post('/auth/google', { idToken });
+    finaliseAuth(response.data.token, response.data.user);
+  };
+
+  /* ───────────────────────────────────────────────
+   * Popup-based flow (first attempt)
+   * ─────────────────────────────────────────────── */
+  const tryPopup = async () => {
+    const result = await signInWithPopup(auth, googleProvider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    const idToken = credential?.idToken;
+    if (!idToken) {
+      throw new Error('Failed to get Google ID token from credential response.');
+    }
+    if (isDev) {
+      console.log('[GoogleSignIn] Popup succeeded for', result.user.email);
+    }
+    await exchangeTokenWithBackend(idToken);
+  };
+
+  /* ───────────────────────────────────────────────
+   * Redirect-based flow (fallback for unauthorized domains)
+   * ─────────────────────────────────────────────── */
+  const tryRedirect = async () => {
+    // First, store the current URL so we can return here after redirect
+    sessionStorage.setItem('googleSignInOrigin', window.location.href);
+
+    // Save the mode so we know it after the redirect loop
+    sessionStorage.setItem('googleSignInMode', mode);
+
+    // Trigger the redirect
+    await signInWithRedirect(auth, googleProvider);
+    // signInWithRedirect causes a full page navigation – code below will not
+    // run immediately; the result is handled after the redirect returns.
+  };
+
+  /* ───────────────────────────────────────────────
+   * Check for a pending redirect result on mount
+   * ─────────────────────────────────────────────── */
+  useEffect(() => {
+    const origin = sessionStorage.getItem('googleSignInOrigin');
+    const savedMode = sessionStorage.getItem('googleSignInMode');
+
+    // Only process if we just returned from a Google redirect
+    if (!origin) return;
+
+    // Clean up immediately to avoid processing twice
+    sessionStorage.removeItem('googleSignInOrigin');
+    sessionStorage.removeItem('googleSignInMode');
+
+    setLoading(true);
+
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!result) {
+          // user closed the page or navigated away – nothing to do
+          return;
+        }
+
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        const idToken = credential?.idToken;
+        if (!idToken) {
+          throw new Error('Failed to get Google ID token after redirect.');
+        }
+
+        if (isDev) {
+          console.log('[GoogleSignIn] Redirect succeeded for', result.user.email);
+        }
+
+        await exchangeTokenWithBackend(idToken);
+      })
+      .catch((err) => {
+        if (isDev) {
+          console.error('[GoogleSignIn] Redirect result error:', err);
+        }
+        setMessageType('error');
+        setMessage(getErrorMessage(err));
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, []);
+
+  /* ───────────────────────────────────────────────
+   * Main handler
+   * ─────────────────────────────────────────────── */
+  const handleGoogleSignIn = async () => {
+    if (popupInProgress.current) return;
+    popupInProgress.current = true;
     setLoading(true);
     setMessage('');
     setMessageType('info');
 
-    popupInProgress.current = true;
-    log('Popup launch', { mode, origin: window.location.origin });
-
     try {
-      // ── Step 1: Open Google sign-in popup ──────────────────────────
-      const result = await signInWithPopup(auth, googleProvider);
-      log('Popup success', { user: result.user.email });
-
-      retryCount.current = 0;
-
-      // ── Step 2: Extract the Google ID token ────────────────────────
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      const idToken = credential?.idToken;
-
-      if (!idToken) {
-        throw new Error('Failed to get Google ID token from credential response.');
-      }
-      log('ID token extracted', { length: idToken.length });
-
-      // ── Step 3: Send token to backend for verification ─────────────
-      const response = await api.post('/auth/google', { idToken });
-      log('Backend verification successful', { userId: response.data.user?.id });
-
-      // ── Step 4: Store auth data ────────────────────────────────────
-      // Store both the backend JWT (for API calls) and Firebase ID token
-      localStorage.setItem('token', response.data.token);
-      localStorage.setItem('user', JSON.stringify(response.data.user));
-
-      // Also ensure firebase_id_token is set for RequireAuth compatibility
-      try {
-        const firebaseToken = await result.user.getIdToken(false);
-        localStorage.setItem('firebase_id_token', firebaseToken);
-      } catch (e) {
-        // Non-critical – RequireAuth checks both tokens
+      // Attempt popup first
+      await tryPopup();
+    } catch (popupError) {
+      if (isDev) {
+        console.warn('[GoogleSignIn] Popup failed – will try redirect:', popupError.code);
       }
 
-      // ── Step 5: Notify user and redirect ───────────────────────────
-      setMessageType('success');
-      setMessage(
-        mode === 'login'
-          ? 'Logged in successfully! Redirecting...'
-          : 'Account created successfully! Redirecting...'
-      );
-
-      setTimeout(() => navigate('/dashboard'), 1200);
-    } catch (error) {
-      logError('Popup failure', error);
-
-      // ── Step 6: Handle specific Firebase errors ────────────────────
-      if (error.code === 'auth/popup-closed-by-user') {
+      /* ── Popup closed by user – benign, inform and stop ── */
+      if (popupError.code === 'auth/popup-closed-by-user') {
         setMessageType('info');
         setMessage(FIREBASE_ERROR_MESSAGES['auth/popup-closed-by-user']);
         return;
       }
 
-      if (error.code === 'auth/cancelled-popup-request') {
+      /* ── Another popup already open – silent ── */
+      if (popupError.code === 'auth/cancelled-popup-request') {
         return;
       }
 
-      if (error.code === 'auth/unauthorized-domain') {
-        setMessageType('error');
-        setMessage(FIREBASE_ERROR_MESSAGES['auth/unauthorized-domain']);
-        return;
-      }
-
-      if (error.code === 'auth/popup-blocked') {
-        setMessageType('error');
-        setMessage(FIREBASE_ERROR_MESSAGES['auth/popup-blocked']);
-        return;
-      }
-
-      if (error.code === 'auth/network-request-failed' && retryCount.current < MAX_RETRIES) {
-        retryCount.current += 1;
-        log(`Retry attempt ${retryCount.current}/${MAX_RETRIES}`);
-
+      /* ── Popup blocked or domain not authorised – try redirect flow ── */
+      if (
+        popupError.code === 'auth/popup-blocked' ||
+        popupError.code === 'auth/unauthorized-domain'
+      ) {
+        if (isDev) {
+          console.log('[GoogleSignIn] Falling back to redirect flow');
+        }
         setMessageType('info');
-        setMessage(`Network error. Retrying (${retryCount.current}/${MAX_RETRIES})...`);
+        setMessage('Redirecting to Google Sign-In…');
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        popupInProgress.current = false;
-        setLoading(false);
-        return handleGoogleSignIn();
-      }
-
-      if (error.code === 'auth/too-many-requests') {
-        setMessageType('error');
-        setMessage(FIREBASE_ERROR_MESSAGES['auth/too-many-requests']);
+        try {
+          await tryRedirect();
+          // After this, the page navigates away – we won't reach the catch below
+          // for sign-in errors. Redirect result is handled in the mount hook.
+        } catch (redirectError) {
+          setMessageType('error');
+          setMessage(getErrorMessage(redirectError));
+        }
         return;
       }
 
-      if (error.code && FIREBASE_ERROR_MESSAGES[error.code]) {
-        setMessageType('error');
-        setMessage(FIREBASE_ERROR_MESSAGES[error.code]);
-        return;
-      }
-
+      /* ── Everything else ── */
       setMessageType('error');
-      setMessage(getErrorMessage(error));
+      setMessage(getErrorMessage(popupError));
     } finally {
       popupInProgress.current = false;
       setLoading(false);
@@ -223,13 +296,13 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
       <button
         type="button"
         onClick={handleGoogleSignIn}
-        disabled={loading || popupInProgress.current}
+        disabled={loading}
         className="w-full flex items-center justify-center gap-3 p-4 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 font-medium text-gray-700"
       >
         {loading ? (
           <>
             <span className="inline-block w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-            <span className="text-gray-500">Signing in...</span>
+            <span className="text-gray-500">Signing in…</span>
           </>
         ) : (
           <>
@@ -258,3 +331,4 @@ export default function GoogleSignInButton({ mode = 'signup' }) {
     </>
   );
 }
+

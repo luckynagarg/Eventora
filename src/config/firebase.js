@@ -1,4 +1,4 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps, getApp, getVersion } from 'firebase/app';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
@@ -42,6 +42,7 @@ const isDev = import.meta.env.DEV === true;
 
 if (isDev) {
   const origin = window.location.origin;
+  const currentHost = window.location.host;
   const authDomain = firebaseConfig.authDomain;
   const projectId = firebaseConfig.projectId;
   const apps = getApps();
@@ -55,12 +56,13 @@ if (isDev) {
     'Auth Domain': authDomain,
     'App Instances': apps.length,
     'Current Origin': origin,
+    'Current Host': currentHost,
     'API Key Present': firebaseConfig.apiKey ? '✅ Yes' : '❌ No',
     'Auth Ready': auth ? '✅ Yes' : '❌ No',
+    'Firebase SDK Version': getVersion ? getVersion() : 'unknown',
   });
 
   // Warn if the current origin is not the authDomain
-  const currentHost = window.location.host;
   const authDomainHost = authDomain.replace('https://', '').replace('http://', '');
   if (!currentHost.includes(authDomainHost) && currentHost !== 'localhost' && currentHost !== 'localhost:5173' && currentHost !== 'localhost:3000') {
     console.warn(
@@ -69,6 +71,14 @@ if (isDev) {
       'color: orange; font-weight: bold;'
     );
   }
+
+  // Also check if Google Sign-In is properly configured
+  console.log(
+    `%c[Firebase] Google Sign-In check:`,
+    'color: #4285F4; font-weight: bold;'
+  );
+  console.log('  Provider scopes:', googleProvider?.providerId);
+  console.log('  Custom params:', googleProvider?.customParameters);
 }
 
 /**

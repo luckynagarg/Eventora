@@ -1,68 +1,86 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
-import './index.css'
-import { onAuthStateChanged } from 'firebase/auth'
-import { auth } from './config/firebase.js'
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { onAuthStateChanged } from 'firebase/auth';
+import App from './App.jsx';
+import { auth } from './config/firebase.js';
+import './index.css';
 
-// ─── Bootstrap Firebase auth state before React renders ──────────────
-// This ensures the auth state is resolved before any component mounts,
-// preventing race conditions where RequireAuth redirects before Firebase
-// finishes checking the persisted session.
+/**
+ * Bootstrap: Initialize authentication before React renders.
+ *
+ * We register a single onAuthStateChanged listener before calling
+ * ReactDOM.createRoot, so that the first auth snapshot is available
+ * by the time any component mounts. Without this guard, the
+ * <RequireAuth> guard can fire before Firebase finishes checking a
+ * persisted session, causing an unnecessary redirect to /login even
+ * when the user is logged in.
+ */
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 2_000;
+
 const isDev = import.meta.env.DEV === true;
 
-let authResolve;
-const authReady = new Promise((resolve) => {
-  authResolve = resolve;
+let resolveAuthBootstrap;
+const authBootstrapComplete = new Promise((resolve) => {
+  resolveAuthBootstrap = resolve;
 });
 
-// Register ONE global onAuthStateChanged listener at the app's entry point.
-// This is the SINGLE source of truth for Firebase auth state.
-// Components subscribe via useFirebaseAuth hook (which also calls onAuthStateChanged,
-// but that's safe since Firebase supports multiple subscribers).
-onAuthStateChanged(auth, async (firebaseUser) => {
-  if (firebaseUser) {
-    try {
-      // Get ID token without forcing refresh (uses cached token if available)
-      const idToken = await firebaseUser.getIdToken(false);
-      localStorage.setItem('firebase_id_token', idToken);
-      localStorage.setItem(
-        'user',
-        JSON.stringify({
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName,
-          photoURL: firebaseUser.photoURL,
-        })
-      );
-      if (isDev) {
-        console.log('[Auth Bootstrap] Firebase user:', firebaseUser.email);
-      }
-    } catch (err) {
-      console.error('[Auth Bootstrap] Token error:', err);
-    }
-  } else {
-    // Only clear Firebase token on actual sign-out, not on initial load
-    // (the user may still have a JWT token from email/password login)
-    if (!localStorage.getItem('token')) {
-      localStorage.removeItem('firebase_id_token');
-    }
-    if (isDev) {
-      console.log('[Auth Bootstrap] No Firebase user');
-    }
-  }
-  authResolve();
-});
-
-// Render React only after auth state is initialized
-authReady.then(() => {
+/** Timer that forces the bootstrap to resolve even if Firebase never fires. */
+const fallbackTimer = setTimeout(() => {
   if (isDev) {
-    console.log('[Auth Bootstrap] Auth state initialized, rendering React');
+    console.warn(
+      '[Bootstrap] Firebase onAuthStateChanged did not fire within ' +
+        `${AUTH_BOOTSTRAP_TIMEOUT_MS} ms – continuing with current auth state.`,
+    );
+  }
+  resolveAuthBootstrap();
+}, AUTH_BOOTSTRAP_TIMEOUT_MS);
+
+onAuthStateChanged(auth, (firebaseUser) => {
+  clearTimeout(fallbackTimer);
+
+  if (firebaseUser) {
+    firebaseUser
+      .getIdToken(false)
+      .then((idToken) => {
+        localStorage.setItem('firebase_id_token', idToken);
+        localStorage.setItem(
+          'firebaseUser',
+          JSON.stringify({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName,
+            photoURL: firebaseUser.photoURL,
+          }),
+        );
+
+        if (isDev) {
+          console.log('[Bootstrap] Firebase user restored:', firebaseUser.email);
+        }
+      })
+      .catch((err) => {
+        console.error('[Bootstrap] Failed to retrieve ID token:', err);
+      })
+      .finally(() => {
+        resolveAuthBootstrap();
+      });
+  } else {
+    // Don't clear localStorage here – the user might have a valid
+    // email/password JWT even if there is no Firebase session.
+    if (isDev) {
+      console.log('[Bootstrap] No Firebase session (email/password may still be valid).');
+    }
+    resolveAuthBootstrap();
+  }
+});
+
+authBootstrapComplete.then(() => {
+  if (isDev) {
+    console.log('[Bootstrap] Auth state resolved – rendering React.');
   }
 
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
       <App />
-    </React.StrictMode>
+    </React.StrictMode>,
   );
 });
