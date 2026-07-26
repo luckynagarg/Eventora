@@ -51,6 +51,7 @@ export default function RequireAuth({ children }) {
           <div className="w-10 h-10 border-[3px] border-purple-600 border-t-transparent rounded-full animate-spin" />
           <span className="text-gray-500 text-base">Verifying session...</span>
         </div>
+        </div>
     );
   }
 
