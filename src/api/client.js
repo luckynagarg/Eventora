@@ -2,8 +2,11 @@ import axios from 'axios';
 
 const isDev = import.meta.env.DEV === true;
 
+// Use VITE_API_URL in production (Vercel), fallback to proxy in dev (Vite proxy)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  baseURL: API_BASE_URL,
 });
 
 // ─── Request Interceptor ───────────────────────────────────────────────────

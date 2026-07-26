@@ -66,7 +66,7 @@ if (isDev) {
   // Warn if the current origin is not the authDomain
   const currentHost = window.location.host;
   const authDomainHost = authDomain.replace('https://', '').replace('http://', '');
-  if (!currentHost.includes(authDomainHost) && currentHost !== 'localhost:5173' && currentHost !== 'localhost:3000') {
+  if (!currentHost.includes(authDomainHost) && currentHost !== 'localhost' && currentHost !== 'localhost:5173' && currentHost !== 'localhost:3000') {
     console.warn(
       `%c[Firebase] ⚠️ Current origin "${origin}" is different from authDomain "${authDomain}". ` +
       'Ensure the current domain is added to Firebase Console → Authentication → Settings → Authorized domains.',
