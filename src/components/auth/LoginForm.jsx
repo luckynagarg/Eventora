@@ -15,8 +15,15 @@ export default function LoginForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setMessage('');
+
+    // Client-side validation for empty fields
+    if (!email.trim() || !password.trim()) {
+      setMessage('Please fill in all required fields');
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const response = await api.post('/auth/login', { email, password });

@@ -39,14 +39,19 @@ export default function SignupForm({ initialRole = 'user' }) {
     setMessage('');
     setMessageType('info');
 
+    // Client-side validation for empty fields
+    if (!form.name.trim() || !form.username.trim() || !form.email.trim() || !form.password || !form.confirmPassword) {
+      setMessageType('error');
+      setMessage('Please fill in all required fields');
+      return;
+    }
+
     const validationError = validatePassword(form.password, form.confirmPassword);
     if (validationError) {
       setMessageType('error');
       setMessage(validationError);
       return;
     }
-
-    if (!canSubmit) return;
 
     setLoading(true);
     try {
